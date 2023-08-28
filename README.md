@@ -1,5 +1,4 @@
-# softWoo
-SoftOne (ERP) - WooCommerce Interconnection
+#SoftOne (ERP) - WooCommerce Interconnection
 
 The script automates the integration of product data between SoftOne and WooCommerce platforms, while handling any potential errors. It follows these main steps:
 
