@@ -42,7 +42,7 @@ function retry($times, $callback, $baseDelayMs = 1000, $maxDelayMs = 30000) {
     while ($attempts < min($times, $maxTries)) {
         try {
             // Attempt to execute the callback
-            return $callback();
+            return $callback(); 
         } catch (Exception $e) {
             $attempts++;
 
@@ -52,7 +52,7 @@ function retry($times, $callback, $baseDelayMs = 1000, $maxDelayMs = 30000) {
                 errorToLogfile($errorMessage);
                 sendErrorEmail($errorMessage);
             }
-            
+
             // Calculate the delay between attempts
             $delayMs = min($baseDelayMs * (2 ** ($attempts - 1)), $maxDelayMs);
             usleep($delayMs * 1000); // Convert milliseconds to microseconds
@@ -63,6 +63,7 @@ function retry($times, $callback, $baseDelayMs = 1000, $maxDelayMs = 30000) {
         }
     }
 }
+
 
 // Configure the mailer
 function configureMailer() {
@@ -354,6 +355,8 @@ function createOrUpdateProductInWooCommerce($product) {
 
                     echo "(VARIATION) product '{$productName}' found in WooCommerce. Checking for updates..." . PHP_EOL;
 
+                    
+                    
                     if (
                         $product['regular_price'] === $wooProduct->regular_price &&
                         $product['stock_quantity'] === $wooProduct->stock_quantity &&
