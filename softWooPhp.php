@@ -34,21 +34,21 @@ function errorToLogfile($errorMessage) {
     file_put_contents($logFile, date("Y-m-d H:i:s") . " " . $errorMessage . "\n", FILE_APPEND);
 }
 
-function retry($times, $callback, $baseDelayMs = 1000, $maxDelayMs = 30000) {
-    $maxTries = 4; // Maximum number of attempts
+function retry($callback, $baseDelayMs = 1000, $maxDelayMs = 30000) {
+    $maxTries = 3; // Maximum number of attempts (fixed at 3)
     $attempts = 0; // Counter for attempts
     $waitTimeBetweenAttempts = 4000000; // 4 seconds in microseconds
 
-    while ($attempts < min($times, $maxTries)) {
+    while ($attempts < $maxTries) {
         try {
             // Attempt to execute the callback
             return $callback(); 
         } catch (Exception $e) {
             $attempts++;
 
-            if ($attempts === $times) {
+            if ($attempts === $maxTries) {
                 // Handle the exception after the last attempt
-                $errorMessage = "Operation failed after $attempts attempts. Error: " . $e->getMessage();
+                $errorMessage = "Operation failed after $maxTries attempts. Error: " . $e->getMessage();
                 errorToLogfile($errorMessage);
                 sendErrorEmail($errorMessage);
             }
@@ -57,7 +57,7 @@ function retry($times, $callback, $baseDelayMs = 1000, $maxDelayMs = 30000) {
             $delayMs = min($baseDelayMs * (2 ** ($attempts - 1)), $maxDelayMs);
             usleep($delayMs * 1000); // Convert milliseconds to microseconds
 
-            if ($attempts < min($times, $maxTries)) {
+            if ($attempts < $maxTries) {
                 usleep($waitTimeBetweenAttempts); // Add a gap between attempts
             }
         }
@@ -135,7 +135,7 @@ function login(){
     ];
 
     try {
-        return retry(3, function () use ($http, $loginUrl, $loginPayload) {
+        return retry(function () use ($http, $loginUrl, $loginPayload) {
             $response = $http->post($loginUrl, ['json' => $loginPayload]);
             $result = $response->getBody()->getContents();
             // Convert response to ISO-8859-7 encoding
@@ -170,7 +170,7 @@ function authenticate($clientID){
     ];
 
     try {
-        return retry(3, function () use ($http, $authenticateUrl, $authenticatePayload) {
+        return retry(function () use ($http, $authenticateUrl, $authenticatePayload) {
             $response = $http->post($authenticateUrl, ['json' => $authenticatePayload]);
             $result = $response->getBody()->getContents();
 
@@ -201,14 +201,14 @@ function fetchProductsFromSoftone($clientID) {
 
          // Calculate the datetime 5 mins ago
         $currentDate = new DateTime('now', new DateTimeZone('Europe/Athens'));
-        $currentDate->sub(new DateInterval('PT5M'));
+        $currentDate->sub(new DateInterval('PT5500M'));
 
         $productsPayload = [
             'clientID' => $clientID,
             'upddate' => $currentDate->format('Y/m/d H:i'), // Use the calculated datetime
         ];
 
-        $responseData = retry(3, function () use ($http, $productsUrl, $productsPayload, $clientID) {
+        $responseData = retry(function () use ($http, $productsUrl, $productsPayload, $clientID) {
             $response = $http->post($productsUrl, [
                 'form_params' => $productsPayload,
                 'headers' => ['Authorization' => "Bearer {$clientID}"]
