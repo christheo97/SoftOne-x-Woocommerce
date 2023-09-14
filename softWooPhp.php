@@ -9,7 +9,7 @@ use GuzzleHttp\Client as HttpClient;
 use Automattic\WooCommerce\HttpClient\HttpClientException;
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\SMTP;
-
+use GuzzleHttp\HandlerStack;
 
 date_default_timezone_set('Europe/Athens');
 set_exception_handler("errorHandler");
@@ -17,14 +17,14 @@ set_exception_handler("errorHandler");
 // Centralized Exception and Error Handler
 function errorHandler($exception, $context = '') {
     $errorMessage = "[" . date('d-m-y H:i:s') . "] Exception: " . $exception->getMessage() . " in " . $exception->getFile() . " on line " . $exception->getLine() . PHP_EOL;
-    
+
     if (!empty($context)) {
         $errorMessage .= "Context: " . $context . PHP_EOL;
     }
 
     // Add stack trace to the error log
     $errorMessage .= "Stack Trace: " . $exception->getTraceAsString() . PHP_EOL;
-    
+
     errorToLogfile($errorMessage);
     sendErrorEmail($errorMessage);
 }
@@ -34,42 +34,11 @@ function errorToLogfile($errorMessage) {
     file_put_contents($logFile, date("Y-m-d H:i:s") . " " . $errorMessage . "\n", FILE_APPEND);
 }
 
-function retry($callback, $baseDelayMs = 1000, $maxDelayMs = 30000) {
-    $maxTries = 3; // Maximum number of attempts (fixed at 3)
-    $attempts = 0; // Counter for attempts
-    $waitTimeBetweenAttempts = 4000000; // 4 seconds in microseconds
-
-    while ($attempts < $maxTries) {
-        try {
-            // Attempt to execute the callback
-            return $callback(); 
-        } catch (Exception $e) {
-            $attempts++;
-
-            if ($attempts === $maxTries) {
-                // Handle the exception after the last attempt
-                $errorMessage = "Operation failed after $maxTries attempts. Error: " . $e->getMessage();
-                errorToLogfile($errorMessage);
-                sendErrorEmail($errorMessage);
-            }
-
-            // Calculate the delay between attempts
-            $delayMs = min($baseDelayMs * (2 ** ($attempts - 1)), $maxDelayMs);
-            usleep($delayMs * 1000); // Convert milliseconds to microseconds
-
-            if ($attempts < $maxTries) {
-                usleep($waitTimeBetweenAttempts); // Add a gap between attempts
-            }
-        }
-    }
-}
-
-
 // Configure the mailer
 function configureMailer() {
     try {
         $mailer = new PHPMailer(true);
-        
+
         // Configure mailer settings
         $mailer->isSMTP();
         $mailer->Host = $_ENV['SMTP_HOST'];
@@ -77,7 +46,7 @@ function configureMailer() {
         $mailer->SMTPAuth = true;
         $mailer->Username = $_ENV['SMTP_USERNAME'];
         $mailer->Password = $_ENV['SMTP_PASSWORD'];
-        $mailer->CharSet = 'UTF-8'; 
+        $mailer->CharSet = 'UTF-8';
 
         return $mailer;
     } catch (Exception $e) {
@@ -93,8 +62,8 @@ function sendErrorEmail($errorMessage) {
     if ($mailer !== null) {
         try {
             // Configure mailer settings
-            $mailer->setFrom($_ENV['SMTP_USERNAME'], 'Your Name');
-            $mailer->addAddress($_ENV['SMTP_USERNAME'], 'Receiver Name');
+            $mailer->setFrom($_ENV['SMTP_USERNAME'], 'Zoo x SoftOne');
+            $mailer->addAddress($_ENV['SMTP_USERNAME'], 'Dev');
             $mailer->Subject = 'Error Report';
             $mailer->Body = $errorMessage;
 
@@ -105,7 +74,6 @@ function sendErrorEmail($errorMessage) {
         }
     }
 }
-
 
 $woocommerce = new Client(
     $_ENV['WOO_SITE_URL'],
@@ -135,26 +103,24 @@ function login(){
     ];
 
     try {
-        return retry(function () use ($http, $loginUrl, $loginPayload) {
-            $response = $http->post($loginUrl, ['json' => $loginPayload]);
-            $result = $response->getBody()->getContents();
-            // Convert response to ISO-8859-7 encoding
-            $result = mb_convert_encoding($result, 'UTF-8', 'ISO-8859-7');
+        $response = $http->post($loginUrl, ['json' => $loginPayload]);
+        $result = $response->getBody()->getContents();
+        // Convert response to ISO-8859-7 encoding
+        $result = mb_convert_encoding($result, 'UTF-8', 'ISO-8859-7');
 
-            // Decode JSON response
-            $result = json_decode($result, true);
+        // Decode JSON response
+        $result = json_decode($result, true);
 
-            if ($result && isset($result['success']) && $result['success']) {
-                return $result['clientID'];
-            } elseif ($result && isset($result['error'])) {
-                throw new Exception('Login failed: ' . $result['error']);
-            } else {
-                throw new Exception('Invalid request. Please login first.');
-            }
-        }, 2000, 30000); // Adjust delay values as needed
+        if ($result && isset($result['success']) && $result['success']) {
+            return $result['clientID'];
+        } elseif ($result && isset($result['error'])) {
+            throw new Exception('Login failed: ' . $result['error']);
+        } else {
+            throw new Exception('Invalid request. Please login first.');
+        }
     } catch (Exception $e) {
         echo "Error: " . $e->getMessage();
-        exit; // Exit the script if website is down
+        exit; // Exit the script if the website is down
     }
 }
 
@@ -170,22 +136,18 @@ function authenticate($clientID){
     ];
 
     try {
-        return retry(function () use ($http, $authenticateUrl, $authenticatePayload) {
-            $response = $http->post($authenticateUrl, ['json' => $authenticatePayload]);
-            $result = $response->getBody()->getContents();
+        $response = $http->post($authenticateUrl, ['json' => $authenticatePayload]);
+        $result = $response->getBody()->getContents();
 
-             // Manually decode the JSON string
-            $result = preg_replace('/[\x00-\x1F\x80-\xFF]/', '', $result);
-            $result = json_decode($result, true);
+         // Manually decode the JSON string
+        $result = preg_replace('/[\x00-\x1F\x80-\xFF]/', '', $result);
+        $result = json_decode($result, true);
 
-            if ($result && isset($result['success']) && $result['success']) {
-                return $result['clientID'];
-            } else {
-                throw new Exception('Invalid request. Please login first.');
-            }
-        }, 2000, function ($exception) {
-            echo "Error: " . $exception->getMessage() . PHP_EOL;
-        });
+        if ($result && isset($result['success']) && $result['success']) {
+            return $result['clientID'];
+        } else {
+            throw new Exception('Invalid request. Please login first.');
+        }
     } catch (Exception $e) {
         echo "Error: " . $e->getMessage();
     }
@@ -195,45 +157,42 @@ function fetchProductsFromSoftone($clientID) {
     global $http;
 
     try {
-        $refreshUrl = 'https://chouchoumis.oncloud.gr/s1services?refresh=refresh';
+        $refreshUrl = $_ENV['SOFTONE_REFRESH_URL'];
         $http->get($refreshUrl, ['headers' => ['Authorization' => "Bearer {$clientID}"]]);
         $productsUrl = $_ENV['SOFTONE_PRODUCTS_URL'];
 
          // Calculate the datetime 5 mins ago
         $currentDate = new DateTime('now', new DateTimeZone('Europe/Athens'));
-        $currentDate->sub(new DateInterval('PT5500M'));
+        $currentDate->sub(new DateInterval('PT5M'));
 
         $productsPayload = [
             'clientID' => $clientID,
             'upddate' => $currentDate->format('Y/m/d H:i'), // Use the calculated datetime
         ];
 
-        $responseData = retry(function () use ($http, $productsUrl, $productsPayload, $clientID) {
-            $response = $http->post($productsUrl, [
-                'form_params' => $productsPayload,
-                'headers' => ['Authorization' => "Bearer {$clientID}"]
-            ]);
+        $response = $http->post($productsUrl, [
+            'form_params' => $productsPayload,
+            'headers' => ['Authorization' => "Bearer {$clientID}"]
+        ]);
 
-            return $response->getBody()->getContents();
-        }, 7, function ($exception) {
-            errorHandler($exception);
-             // Handle the fetch products error
-            echo "Error fetching products from SoftOne: " . $exception->getMessage() . PHP_EOL;
-           // Send an error email if needed
-        });
+        // Retrieve content from the response
+        $responseData = $response->getBody()->getContents();
 
+        // Apply mb_convert_encoding to the content
         $responseData = mb_convert_encoding($responseData, 'UTF-8', 'ISO-8859-7');
+
         $responseData = json_decode($responseData, true);
 
         $woocommerceProducts = [];
         if ($responseData && isset($responseData['success']) && $responseData['success'] && is_array($responseData['data'])) {
             foreach ($responseData['data'] as $product) {
                 $factoryCode = isset($product['FACTORYCODE']) ? $product['FACTORYCODE'] : '';
-
+                $sku = isset($product['SKU']) ? $product['SKU'] : 'N/A'; // Check if 'SKU' key exists
+            
                 $woocommerceProducts[] = [
                     'name' => $product['NAME'],
                     'type' => 'simple',
-                    'sku' => $product['SKU'],
+                    'sku' => $sku,
                     'regular_price' => $product['PRICER'],
                     'manage_stock' => true,
                     'stock_quantity' => intval($product['BALANCE']),
@@ -241,6 +200,7 @@ function fetchProductsFromSoftone($clientID) {
                     'factory_code' => $factoryCode,
                 ];
             }
+            
         }
         return $woocommerceProducts;
 
@@ -355,8 +315,6 @@ function createOrUpdateProductInWooCommerce($product) {
 
                     echo "(VARIATION) product '{$productName}' found in WooCommerce. Checking for updates..." . PHP_EOL;
 
-                    
-                    
                     if (
                         $product['regular_price'] === $wooProduct->regular_price &&
                         $product['stock_quantity'] === $wooProduct->stock_quantity &&

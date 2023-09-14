@@ -3,3 +3,5 @@
 /composer.lock
 /env
 /vendor
+test.php
+logfile.log
