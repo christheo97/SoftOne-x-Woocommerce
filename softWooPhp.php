@@ -155,64 +155,67 @@ function authenticate($clientID){
 
 function fetchProductsFromSoftone($clientID) {
     global $http;
-
     try {
+        // Refresh and fetch URLs
         $refreshUrl = $_ENV['SOFTONE_REFRESH_URL'];
-        $http->get($refreshUrl, ['headers' => ['Authorization' => "Bearer {$clientID}"]]);
         $productsUrl = $_ENV['SOFTONE_PRODUCTS_URL'];
 
-         // Calculate the datetime 5 mins ago
+        // Refresh token
+        $http->get($refreshUrl, ['headers' => ['Authorization' => "Bearer {$clientID}"]]);
+
+        // Calculate datetime 5 mins ago
         $currentDate = new DateTime('now', new DateTimeZone('Europe/Athens'));
         $currentDate->sub(new DateInterval('PT5M'));
 
+        // Payload
         $productsPayload = [
             'clientID' => $clientID,
-            'upddate' => $currentDate->format('Y/m/d H:i'), // Use the calculated datetime
+            'upddate' => $currentDate->format('Y/m/d H:i'),
         ];
 
+        // Fetch products
         $response = $http->post($productsUrl, [
             'form_params' => $productsPayload,
             'headers' => ['Authorization' => "Bearer {$clientID}"]
         ]);
 
-        // Retrieve content from the response
-        $responseData = $response->getBody()->getContents();
+        // Process response
+        $responseData = json_decode(mb_convert_encoding($response->getBody()->getContents(), 'UTF-8', 'ISO-8859-7'), true);
 
-        // Apply mb_convert_encoding to the content
-        $responseData = mb_convert_encoding($responseData, 'UTF-8', 'ISO-8859-7');
-
-        $responseData = json_decode($responseData, true);
-
+        // Populate WooCommerce product array
         $woocommerceProducts = [];
-        if ($responseData && isset($responseData['success']) && $responseData['success'] && is_array($responseData['data'])) {
+        if ($responseData['success'] && is_array($responseData['data'])) {
             foreach ($responseData['data'] as $product) {
-                $factoryCode = isset($product['FACTORYCODE']) ? $product['FACTORYCODE'] : '';
-                $sku = isset($product['SKU']) ? $product['SKU'] : 'N/A'; // Check if 'SKU' key exists
+                $regular_price = isset($product['PRICER']) ? $product['PRICER'] : 0;
+                $discount1 = isset($product['SODISCOUNT']) ? $product['SODISCOUNT'] : 0;
+                $discount2 = isset($product['SODISCOUNT1']) ? $product['SODISCOUNT1'] : 0;
+                $sale_price = $regular_price * (1 - $discount1 / 100) * (1 - $discount2 / 100);
             
                 $woocommerceProducts[] = [
                     'name' => $product['NAME'],
                     'type' => 'simple',
-                    'sku' => $sku,
-                    'regular_price' => $product['PRICER'],
-                    'manage_stock' => true,
+                    'sku' => $product['SKU'] ?? 'N/A',
+                    'regular_price' => $regular_price,
+                    'sale_price' => number_format($sale_price, 2, '.', ''),
                     'stock_quantity' => intval($product['BALANCE']),
                     'ean' => $product['BARCODE'],
-                    'factory_code' => $factoryCode,
+                    'factory_code' => $product['FACTORYCODE'] ?? '',
+                    'discount1' => $discount1,
+                    'discount2' => $discount2,
                 ];
             }
-            
         }
         return $woocommerceProducts;
 
     } catch (RequestException $e) {
         echo 'Error: ' . $e->getMessage() . PHP_EOL;
         if ($e->hasResponse()) {
-            $response = $e->getResponse();
-            $body = $response->getBody()->getContents();
-            echo 'Response Body: ' . $body . PHP_EOL;
+            echo 'Response Body: ' . $e->getResponse()->getBody()->getContents() . PHP_EOL;
         }
     }
 }
+
+
 
 function productUpdateCheck($newProduct, $wooProducts){
     $wooEAN = '';
@@ -231,6 +234,7 @@ function productUpdateCheck($newProduct, $wooProducts){
     return (
         $wooProducts->name !== $newProduct['name'] ||
         $wooProducts->regular_price !== $newProduct['regular_price'] ||
+        $wooProducts->sale_price !== $newProduct['sale_price'] ||
         $wooProducts->stock_quantity !== $newProduct['stock_quantity'] ||
         $wooProducts->sku !== $newProduct['sku'] ||
         $wooEAN !== $newProduct['meta_data'][0]['value'] ||
@@ -244,6 +248,7 @@ function productFields($product){
         'type' => 'simple',
         'sku' => $product['sku'],
         'regular_price' => $product['regular_price'],
+        'sale_price' => $product['sale_price'],
         'manage_stock' => true,
         'stock_quantity' => $product['stock_quantity'],
         'stock_status' => $product['stock_quantity'] > 0 ? 'instock' : 'outofstock',
@@ -299,7 +304,7 @@ function createOrUpdateProductInWooCommerce($product) {
                             'key' => '_factory_code',
                             'value' => isset($productData['factory_code']) ? $productData['factory_code'] : ''
                         ];
-
+                        $newProductData['sale_price'] = $product['sale_price'];
                         $productData['manage_stock'] = true;
                         $productData['stock_status'] = $productData['stock_quantity'] > 0 ? 'instock' : 'outofstock'; // Update the stock status too
                         $woocommerce->put("products/{$productId}", $productData);
@@ -319,6 +324,7 @@ function createOrUpdateProductInWooCommerce($product) {
                         $product['regular_price'] === $wooProduct->regular_price &&
                         $product['stock_quantity'] === $wooProduct->stock_quantity &&
                         $product['sku'] === $wooProduct->sku &&
+                        $product['sale_price'] === $wooProduct->sale_price &&
                         $product['factory_code'] === $factory_code
                     ) {
                         echo "The product is up to date in WooCommerce. Skipping update." . PHP_EOL;
@@ -328,6 +334,7 @@ function createOrUpdateProductInWooCommerce($product) {
 
                         $updatedVariationData = [
                             'regular_price' => $product['regular_price'],
+                            'sale_price' => $product['sale_price'],
                             'stock_quantity' => $product['stock_quantity'],
                             'sku' => $product['sku'],
                             'meta_data' => [
@@ -416,7 +423,10 @@ for ($i = 0; $i < $totalProducts; $i += $batchSize) {
 
     foreach ($batchProducts as $product) {
         try {
-            createOrUpdateProductInWooCommerce($product);
+            $updatedProduct = createOrUpdateProductInWooCommerce($product);
+            if ($updatedProduct) {
+                $batchUpdates[] = $updatedProduct;
+            }
         } catch (Exception $e) {
             errorHandler($e, "Error processing product: " . $product['name']);
         }
